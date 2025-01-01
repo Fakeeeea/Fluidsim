@@ -10,6 +10,11 @@ A big challenge was actually rendering the particles. This project uses wingdi f
 The algorithm used, SPH is a particle-based simulation method used to model fluids. Each particle interacts with its neighbors to simulate realistic fluid behavior.  
 CUDA allowed the simulation to handle a large number of particles efficiently, allowing also for prettier rendering.  
 
+## Old_functions folder
+
+This folder contains all the various function used before implementing CUDA.  
+They aren't refined but might be useful for someone.  
+
 ## Possible future improvements
 
 - Add a parser for a settings and initial particle positions file, to allow the user to change up freely the simulation paramaters without rebuilding the whole project.  
