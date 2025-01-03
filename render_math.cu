@@ -80,7 +80,7 @@ __global__ void set_bitmap_colors(int *gpu_bitmap, v2 *positions, v2 size, setti
 
         float final_light = ray_light * (calculated_density.x/3);
 
-        //The values are clamped between 0 and 255
+        //The values are clamped between 15*absorption factor and 255
         int red = max((int)(a_red * 15), min(255, (int)(255 * final_light * a_red)));
         int green = max((int)(a_green * 15), min(255, (int)(255 * final_light * a_green)));
         int blue = max((int)(a_blue * 15), min(255, (int)(255 * final_light * a_blue)));
