@@ -1,6 +1,7 @@
 # C SPH Fluid Simulation using CUDA
 
 This project implements a fluid simulation engine in C, using wingdi to draw on the window and CUDA to allow for better performance.
+This project was made entirely for educational porpouses.  
 
 ## About the Project  
 
@@ -10,6 +11,9 @@ A big challenge was actually rendering the particles. This project uses wingdi f
 The algorithm used, SPH is a particle-based simulation method used to model fluids. Each particle interacts with its neighbors to simulate realistic fluid behavior.  
 CUDA allowed the simulation to handle a large number of particles efficiently, allowing also for prettier rendering.  
 
+With the latest update code has been cleaned up, light calculation which barely made a difference has been removed from the rendering function, making the function way faster (as now every gpu thread doesn't have to go through a screen_size.y loop).  
+Also added a parser for settings and spawn locations of particles.
+
 ## Old_functions folder
 
 This folder contains all the various function used before implementing CUDA.  
@@ -17,9 +21,10 @@ They aren't refined but might be useful for someone.
 
 ## Possible future improvements
 
-- Add a parser for a settings and initial particle positions file, to allow the user to change up freely the simulation paramaters without rebuilding the whole project.  
 - Seek into some better rendering alternatives, as the current thing I came up with pretty rough.  
 - Further optimize the code  
+- Add the possibility to put obstacles in the map  
+- Fix broken mechanics with smoothing radius > 0 && < 1  
 
 ## Extremerly useful resources:
 https://www.researchgate.net/publication/221622709_SPH_Based_Shallow_Water_Simulation  
