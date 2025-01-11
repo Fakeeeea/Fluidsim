@@ -1,5 +1,4 @@
 #include <cuda_runtime.h>
-#include <stdio.h>
 
 #include "sim_math.cuh"
 #include "types.h"
@@ -15,65 +14,64 @@ extern "C" {
 __host__ void malloc_simulation_gpu(int n_particles, particles *sim)
 {
     cudaMalloc(&(sim->gpu_density), sizeof(float) * n_particles);
-    cudaMalloc(&(sim->gpu_pos), sizeof(v2) * n_particles);
-    cudaMalloc(&(sim->gpu_p_pos), sizeof(v2) * n_particles);
-    cudaMalloc(&(sim->gpu_vel), sizeof(v2) * n_particles);
-    cudaMalloc(&(sim->gpu_pressure), sizeof(v2) * n_particles);
-    cudaMalloc(&(sim->gpu_viscosity), sizeof(v2) * n_particles);
+    cudaHostAlloc(&(sim->gpu_pos), sizeof(float_v2) * n_particles, cudaHostAllocDefault);
+    cudaMalloc(&(sim->gpu_p_pos), sizeof(float_v2) * n_particles);
+    cudaMalloc(&(sim->gpu_vel), sizeof(float_v2) * n_particles);
+    cudaMalloc(&(sim->gpu_pressure), sizeof(float_v2) * n_particles);
+    cudaMalloc(&(sim->gpu_viscosity), sizeof(float_v2) * n_particles);
     cudaMalloc(&(sim->gpu_near_density), sizeof(float) * n_particles);
 
-    cudaMemcpy(sim->gpu_pos, sim->pos, sizeof(v2) * n_particles, cudaMemcpyHostToDevice);
-    cudaMemcpy(sim->gpu_p_pos, sim->pos, sizeof(v2) * n_particles, cudaMemcpyHostToDevice);
+    cudaMemcpy(sim->gpu_pos, sim->pos, sizeof(float_v2) * n_particles, cudaMemcpyHostToDevice);
+    cudaMemcpy(sim->gpu_p_pos, sim->pos, sizeof(float_v2) * n_particles, cudaMemcpyHostToDevice);
 
-    cudaMemset(sim->gpu_vel, 0, sizeof(v2) * n_particles);
-    cudaMemset(sim->gpu_pressure, 0, sizeof(v2) * n_particles);
-    cudaMemset(sim->gpu_viscosity, 0, sizeof(v2) * n_particles);
+    cudaMemset(sim->gpu_vel, 0, sizeof(float_v2) * n_particles);
+    cudaMemset(sim->gpu_pressure, 0, sizeof(float_v2) * n_particles);
+    cudaMemset(sim->gpu_viscosity, 0, sizeof(float_v2) * n_particles);
     cudaMemset(sim->gpu_density, 0, sizeof(float) * n_particles);
     cudaMemset(sim->gpu_near_density, 0, sizeof(float) * n_particles);
 }
 
-__host__  void simulation_step_gpu(v2 container, particles *sim, int N_PARTICLES, settings s, cells *cell_ll)
+__host__  void simulation_step_gpu(int_v2 container, particles *sim, settings s, cells *cell_ll)
 {
+    const int n_particles = s.ss.n_particles;
     int block_size = 256;
-    int num_blocks = (N_PARTICLES + block_size - 1) / block_size;
+    int num_blocks = (n_particles + block_size - 1) / block_size;
 
-    update_cells<<<num_blocks, block_size>>>(cell_ll->entries, cell_ll->start_indices, sim->gpu_p_pos, N_PARTICLES, s);
+    update_cells<<<num_blocks, block_size>>>(cell_ll->entries, cell_ll->start_indices, sim->gpu_p_pos, s);
     cudaDeviceSynchronize();
 
-    sort_entries(cell_ll->entries, N_PARTICLES);
+    sort_entries(cell_ll->entries, n_particles);
     cudaDeviceSynchronize();
 
-    set_start_indices<<<num_blocks, block_size>>>(cell_ll->entries, cell_ll->start_indices, N_PARTICLES);
+    set_start_indices<<<num_blocks, block_size>>>(cell_ll->entries, cell_ll->start_indices, n_particles);
     cudaDeviceSynchronize();
 
-    set_predicted_positions<<<num_blocks, block_size>>>(sim->gpu_pos, sim->gpu_p_pos, sim->gpu_vel, N_PARTICLES, container, s);
+    set_predicted_positions<<<num_blocks, block_size>>>(sim->gpu_pos, sim->gpu_p_pos, sim->gpu_vel, container, s);
     cudaDeviceSynchronize();
 
-    set_densities<<<num_blocks, block_size>>>(sim->gpu_p_pos, sim->gpu_density, sim->gpu_near_density, N_PARTICLES, s, cell_ll->entries, cell_ll->start_indices, cell_ll->size);
+    set_densities<<<num_blocks, block_size>>>(sim->gpu_p_pos, sim->gpu_density, sim->gpu_near_density, s, cell_ll->entries, cell_ll->start_indices, cell_ll->world_size);
     cudaDeviceSynchronize();
 
-    set_pressures<<<num_blocks, block_size>>>(sim->gpu_p_pos, sim->gpu_density, sim->gpu_near_density, sim->gpu_pressure, N_PARTICLES, s, cell_ll->entries, cell_ll->start_indices, cell_ll->size);
+    set_pressures<<<num_blocks, block_size>>>(sim->gpu_p_pos, sim->gpu_density, sim->gpu_near_density, sim->gpu_pressure, s, cell_ll->entries, cell_ll->start_indices, cell_ll->world_size);
     cudaDeviceSynchronize();
 
-    set_viscosities<<<num_blocks, block_size>>>(sim->gpu_vel, sim->gpu_p_pos, sim->gpu_viscosity, N_PARTICLES, s, cell_ll->size, cell_ll->entries, cell_ll->start_indices);
+    set_viscosities<<<num_blocks, block_size>>>(sim->gpu_vel, sim->gpu_p_pos, sim->gpu_viscosity, s, cell_ll->world_size, cell_ll->entries, cell_ll->start_indices);
     cudaDeviceSynchronize();
 
-    set_velocities<<<num_blocks, block_size>>>(sim->gpu_vel, sim->gpu_pressure, sim->gpu_viscosity, N_PARTICLES, s);
+    set_velocities<<<num_blocks, block_size>>>(sim->gpu_vel, sim->gpu_pressure, sim->gpu_viscosity, s);
     cudaDeviceSynchronize();
 
-    set_positions<<<num_blocks, block_size>>>(sim->gpu_pos, sim->gpu_vel, container, N_PARTICLES, s);
+    set_positions<<<num_blocks, block_size>>>(sim->gpu_pos, sim->gpu_vel, container, s);
     cudaDeviceSynchronize();
-
-    cudaMemcpy(sim->pos, sim->gpu_pos, sizeof(v2) * N_PARTICLES, cudaMemcpyDeviceToHost);
 }
 
-__host__ void create_cell_ll_gpu(cells *cell_ll, int n_particles, RECT rect, settings s)
+__host__ void create_cell_ll_gpu(cells *cell_ll, RECT rect, settings s)
 {
-    v2 size = {ceilf(rect.right/s.smoothing_length), ceilf(rect.bottom/s.smoothing_length)};
+    int_v2 size = { (int) ceilf( (float) rect.right / s.ss.smoothing_length), (int) ceilf( (float) rect.bottom / s.ss.smoothing_length)};
 
-    cell_ll->size = size;
-    cudaMalloc(&(cell_ll->entries), sizeof(entry) * n_particles);
-    cudaMalloc(&(cell_ll->start_indices), sizeof(int) * n_particles);
+    cell_ll->world_size = size;
+    cudaMalloc(&(cell_ll->entries), sizeof(entry) * s.ss.n_particles);
+    cudaMalloc(&(cell_ll->start_indices), sizeof(int) * s.ss.n_particles);
 
 }
 
@@ -98,7 +96,7 @@ __host__ void sort_entries(entry *entries, int n_particles)
 
     for(int i = n_particles; i < padded_size; i++)
     {
-        cpu_padded_entries[i] = {INT_MAX, {0,0}, -1};
+        cpu_padded_entries[i] = {INT_MAX, -1};
     }
 
     entry *gpu_padded_entries;
@@ -130,7 +128,7 @@ __host__ void sort_entries(entry *entries, int n_particles)
 __host__ void free_simulation_memory(particles *sim)
 {
     cudaFree(sim->gpu_density);
-    cudaFree(sim->gpu_pos);
+    cudaFreeHost(sim->gpu_pos);
     cudaFree(sim->gpu_p_pos);
     cudaFree(sim->gpu_vel);
     cudaFree(sim->gpu_pressure);
@@ -190,14 +188,14 @@ __device__ float spiky_near_pressure_kernel(float r, float h)
     return spiky_scaling * (h - r) * (h - r) * (h - r) * (h - r);
 }
 
-__global__ void set_densities(v2 *predicted_positions, float *densities, float *near_densities, int n_particles, settings s, entry *entries, int *start_indices, v2 size)
+__global__ void set_densities(float_v2 *predicted_positions, float *densities, float *near_densities, settings s, entry *entries, int *start_indices, int_v2 size)
 {
     int i = (int) (blockIdx.x * blockDim.x + threadIdx.x);
 
-    if(i >= n_particles)
+    if(i >= s.ss.n_particles)
         return;
 
-    v2 density_pair = calculate_density(predicted_positions, predicted_positions[i], n_particles, s, entries, start_indices, size);
+    float_v2 density_pair = calculate_density(predicted_positions, predicted_positions[i], s, entries, start_indices, size);
 
     densities[i] = density_pair.x;
     near_densities[i] = density_pair.y;
@@ -208,44 +206,50 @@ __global__ void set_densities(v2 *predicted_positions, float *densities, float *
  */
 
 //Changed up to use position directly instead of particle number
-__device__ v2 calculate_density(v2 *predicted_positions, v2 particle_pos, int n_particles, settings s, entry *entries, int *start_indices, v2 size)
+__device__ float_v2 calculate_density(float_v2 *predicted_positions, float_v2 particle_pos, settings s, entry *entries, int *start_indices, int_v2 size)
 {
-    v2 center = cell_coordinate(particle_pos, s.smoothing_length);
-    v2 density_pair = {0, 0};
-    float h_2 = s.smoothing_length * s.smoothing_length;
+    const float h = s.ss.smoothing_length;
+    const float h_2 = h * h;
+    const float mass = s.ss.mass;
+    const int n_particles = s.ss.n_particles;
 
-    for(int offsetX = -1; offsetX <= 1; offsetX++)
+    const int_v2 center = cell_coordinate(particle_pos, h);
+
+    float_v2 density_pair = {0, 0};
+
+    //pre-calculating bounds instead of checking them inside the loop every time
+
+    const int min_x = center.x - 1 < 0 ? 0 : center.x - 1;
+    const int max_x = center.x + 1 >= size.x ? center.x : center.x + 1;
+    const int min_y = center.y - 1 < 0 ? 0 : center.y - 1;
+    const int max_y = center.y + 1 >= size.y ? center.x : center.y + 1;
+
+    for(int x = min_x; x <= max_x; x++)
     {
-        if((center.x + offsetX) < 0 || (center.x + offsetX) >= size.x)
-            continue;
-
-        for(int offsetY = -1; offsetY <= 1; offsetY++)
+        for(int y = min_y; y <= max_y; y++)
         {
-            if((center.y + offsetY) < 0 || (center.y + offsetY) >= size.y)
-                continue;
-
-            v2 cell = {center.x + offsetX, center.y + offsetY};
-            int cell_key = hash_cell(n_particles, cell);
-            int cell_start = start_indices[cell_key];
+            const int_v2 cell = {x, y};
+            const int cell_key = hash_cell(n_particles, cell);
+            const int cell_start = start_indices[cell_key];
 
             if(cell_start == -1)
                 continue;
 
             for(int i = cell_start; i < n_particles; i++)
             {
+                const entry current_entry = entries[i];
                 //Double-checking hash and location
-                if(entries[i].cell_key != cell_key || (entries[i].location.x != center.x + offsetX || entries[i].location.y != center.y + offsetY))
+                if(current_entry.cell_key != cell_key)
                     break;
 
-                int pi = entries[i].particle_index;
-
-                float distance_2 = get_distance_2(particle_pos, predicted_positions[pi]);
+                const int pi = current_entry.particle_index;
+                const float distance_2 = get_distance_2(particle_pos, predicted_positions[pi]);
 
                 if(distance_2 > h_2)
                     continue;
 
-                density_pair.x += s.mass * poly6_smoothing_kernel(distance_2, h_2);
-                density_pair.y += s.mass * poly6_near_density_kernel(distance_2, h_2);
+                density_pair.x += mass * poly6_smoothing_kernel(distance_2, h_2);
+                density_pair.y += mass * poly6_near_density_kernel(distance_2, h_2);
             }
         }
     }
@@ -253,14 +257,14 @@ __device__ v2 calculate_density(v2 *predicted_positions, v2 particle_pos, int n_
     return density_pair;
 }
 
-__global__ void set_pressures(v2 *predicted_positions, float *densities, float *near_densities, v2 *pressures, int n_particles, settings s, entry *entries, int *start_indices, v2 size)
+__global__ void set_pressures(float_v2 *predicted_positions, float *densities, float *near_densities, float_v2 *pressures, settings s, entry *entries, int *start_indices, int_v2 size)
 {
     int i = (int) (blockIdx.x * blockDim.x + threadIdx.x);
 
-    if(i >= n_particles)
+    if(i >= s.ss.n_particles)
         return;
 
-    pressures[i] = calculate_pressure(predicted_positions, densities, near_densities, i, n_particles, s, entries, start_indices, size);
+    pressures[i] = calculate_pressure(predicted_positions, densities, near_densities, i, s, entries, start_indices, size);
 }
 
 /* Pressure calculation uses symmetric pressure to follow newton's third law.
@@ -270,48 +274,57 @@ __global__ void set_pressures(v2 *predicted_positions, float *densities, float *
  * particles from getting stuck to each other.
  */
 
-__device__ v2 calculate_pressure(v2 *predicted_positions, float *densities, float *near_densities, int p_number, int n_particles, settings s, entry *entries, int *start_indices, v2 size)
+__device__ float_v2 calculate_pressure(float_v2 *predicted_positions, float *densities, float *near_densities, int p_number, settings s, entry *entries, int *start_indices, int_v2 size)
 {
-    v2 center = cell_coordinate(predicted_positions[p_number], s.smoothing_length);
-    v2 pressure = {0, 0};
-    v2 near_pressure = {0, 0};
-    float h_2 = s.smoothing_length * s.smoothing_length;
+    const float h = s.ss.smoothing_length;
+    const float h_2 = h * h;
+    const float mass = s.ss.mass;
+    const int n_particles = s.ss.n_particles;
 
-    for(int offsetX = -1; offsetX <= 1; offsetX++)
+    const int_v2 center = cell_coordinate(predicted_positions[p_number], h);
+    float_v2 pressure = {0, 0};
+    float_v2 near_pressure = {0, 0};
+
+    //pre-calculating bounds instead of checking them inside the loop every time
+
+    const int min_x = center.x - 1 < 0 ? 0 : center.x - 1;
+    const int max_x = center.x + 1 >= size.x ? center.x : center.x + 1;
+    const int min_y = center.y - 1 < 0 ? 0 : center.y - 1;
+    const int max_y = center.y + 1 >= size.y ? center.x : center.y + 1;
+
+    for(int x = min_x; x <= max_x; x++)
     {
-        if((center.x + offsetX) < 0 || (center.x + offsetX) >= size.x)
-            continue;
-
-        for(int offsetY = -1; offsetY <= 1; offsetY++)
+        for(int y = min_y; y <= max_y; y++)
         {
-            if((center.y + offsetY) < 0 || (center.y + offsetY) >= size.y)
-                continue;
 
-            v2 cell = {center.x + offsetX, center.y + offsetY};
-            int cell_key = hash_cell(n_particles, cell);
-            int cell_start = start_indices[cell_key];
+            const int_v2 cell = {x, y};
+            const int cell_key = hash_cell(n_particles, cell);
+            const int cell_start = start_indices[cell_key];
 
             if(cell_start == -1)
                 continue;
 
             for(int i = cell_start; i < n_particles; i++)
             {
+                const entry current_entry = entries[i];
+
                 //Double-checking hash and location
-                if(entries[i].cell_key != cell_key || (entries[i].location.x != (center.x + offsetX) || entries[i].location.y != (center.y + offsetY)))
+                if(current_entry.cell_key != cell_key)
                     break;
 
-                int pi = entries[i].particle_index;
+                int pi = current_entry.particle_index;
 
                 if(pi == p_number)
                     continue; //Ignore self
 
-                float distance_2 = get_distance_2(predicted_positions[p_number], predicted_positions[pi]);
+                const float distance_2 = get_distance_2(predicted_positions[p_number], predicted_positions[pi]);
 
                 if(distance_2 > h_2)
                     continue;
 
-                v2 dir = {0,0};
-                float distance = sqrt(distance_2);
+                float_v2 dir = {0, 0};
+                const float distance = sqrt(distance_2);
+
                 if(distance > 1e-10)
                 {
                     dir.x = (predicted_positions[p_number].x - predicted_positions[pi].x) / distance;
@@ -320,17 +333,17 @@ __device__ v2 calculate_pressure(v2 *predicted_positions, float *densities, floa
 
                 if(densities[pi] > 1e-10)
                 {
-                    float sp = calculate_symmetric_pressure(densities[p_number], densities[pi], s);
-                    float slope = spiky_smoothing_kernel(distance, s.smoothing_length);
+                    const float sp = calculate_symmetric_pressure(densities[p_number], densities[pi], s);
+                    const float slope = spiky_smoothing_kernel(distance, h);
 
-                    pressure.x += -s.mass * sp * slope * dir.x;
-                    pressure.y += -s.mass * sp * slope * dir.y;
+                    pressure.x += -mass * sp * slope * dir.x;
+                    pressure.y += -mass * sp * slope * dir.y;
 
-                    float near_sp = calculate_symmetric_near_pressure(near_densities[p_number], near_densities[pi], s);
-                    float near_slope = spiky_near_pressure_kernel(distance, s.smoothing_length);
+                    const float near_sp = calculate_symmetric_near_pressure(near_densities[p_number], near_densities[pi], s);
+                    const float near_slope = spiky_near_pressure_kernel(distance, h);
 
-                    near_pressure.x += -s.mass * near_sp * near_slope * dir.x;
-                    near_pressure.y += -s.mass * near_sp * near_slope * dir.y;
+                    near_pressure.x += -mass * near_sp * near_slope * dir.x;
+                    near_pressure.y += -mass * near_sp * near_slope * dir.y;
                 }
             }
         }
@@ -365,16 +378,16 @@ __device__ inline float calculate_symmetric_pressure(float density1, float densi
 
 __device__ inline float near_density_to_pressure(float near_density, settings s)
 {
-    float near_pressure = s.near_pressure_multiplier*near_density;
+    float near_pressure = s.ss.near_pressure_multiplier*near_density;
 
     return near_pressure;
 }
 
 __device__ inline float density_to_pressure(float density, settings s)
 {
-    float pressure = s.pressure_multiplier*(density - s.rest_density);
+    float pressure = s.ss.pressure_multiplier*(density - s.ss.rest_density);
 
-    //negative pressure (particles attracting eachother)
+    //negative pressure (particles attracting each-other)
     //if(pressure < 0.0f)
     //  return 0;
 
@@ -384,138 +397,141 @@ __device__ inline float density_to_pressure(float density, settings s)
 /*To avoid particles getting completely stuck on edges when we resize the window, we give them some speed. There
  * are surely better solutions, but this is the simplest work-around I found.
  */
-__global__ void set_positions(v2 *positions, v2 *velocities, v2 grid_size, int n_particles, settings s)
+__global__ void set_positions(float_v2 *positions, float_v2 *velocities, int_v2 container, settings s)
 {
     int i = (int) (blockIdx.x * blockDim.x + threadIdx.x);
 
-    if(i >= n_particles)
+    if(i >= s.ss.n_particles)
         return;
 
 
-    positions[i].x += velocities[i].x*s.time_step;
-    positions[i].y += velocities[i].y*s.time_step;
+    positions[i].x += velocities[i].x*s.ss.time_step;
+    positions[i].y += velocities[i].y*s.ss.time_step;
 
 
     if(positions[i].x < 0)
     {
         positions[i].x = 0;
 
-        if(velocities[i].x > -0.5 && velocities[i].x < 0)
-            velocities[i].x = 2;
-        else
-            velocities[i].x = -velocities[i].x * s.bounce_multiplier;
+        //if(velocities[i].x > -0.5 && velocities[i].x < 0)
+        //    velocities[i].x = 2;
+        //else
+            velocities[i].x = -velocities[i].x * s.ss.bounce_multiplier;
     }
-    else if(positions[i].x >= grid_size.x)
+    else if(positions[i].x >= (float) container.x)
     {
-        positions[i].x = grid_size.x;
+        positions[i].x = (float) container.x;
 
-        if(velocities[i].x < 0.5 && velocities[i].x > 0)
-            velocities[i].x = -2;
-        else
-            velocities[i].x = -velocities[i].x * s.bounce_multiplier;
+        //if(velocities[i].x < 0.5 && velocities[i].x > 0)
+        //    velocities[i].x = -2;
+        //else
+            velocities[i].x = -velocities[i].x * s.ss.bounce_multiplier;
     }
 
     if(positions[i].y < 0)
     {
         positions[i].y = 0;
-        velocities[i].y = -velocities[i].y * s.bounce_multiplier;
+        velocities[i].y = -velocities[i].y * s.ss.bounce_multiplier;
     }
-    else if(positions[i].y >= grid_size.y)
+    else if(positions[i].y >= (float) container.y)
     {
-        positions[i].y = grid_size.y;
-        velocities[i].y = -velocities[i].y * s.bounce_multiplier;
+        positions[i].y = (float) container.y;
+        velocities[i].y = -velocities[i].y * s.ss.bounce_multiplier;
     }
 }
 
 /* Using predicted positions instead of the real particle positions in the simulation helps at managing the chaos which the simulation
  * can become.
  */
-__global__ void set_predicted_positions(v2 *positions, v2 *predicted_positions, v2 *velocities, int n_particles, v2 grid_size, settings s)
+__global__ void set_predicted_positions(float_v2 *positions, float_v2 *predicted_positions, float_v2 *velocities, int_v2 container, settings s)
 {
     int i = (int) (blockIdx.x * blockDim.x + threadIdx.x);
 
-    if(i >= n_particles)
+    if(i >= s.ss.n_particles)
         return;
 
-    predicted_positions[i].x = positions[i].x + velocities[i].x*s.time_step;
-    predicted_positions[i].y = positions[i].y + velocities[i].y*s.time_step;
+    predicted_positions[i].x = positions[i].x + velocities[i].x*s.ss.time_step;
+    predicted_positions[i].y = positions[i].y + velocities[i].y*s.ss.time_step;
 
     if(predicted_positions[i].x < 0)
     {
         predicted_positions[i].x = 0;
     }
-    else if(predicted_positions[i].x >= grid_size.x)
+    else if(predicted_positions[i].x >= (float) container.x)
     {
-        predicted_positions[i].x = grid_size.x;
+        predicted_positions[i].x = (float) container.x;
     }
 
     if(predicted_positions[i].y < 0)
     {
         predicted_positions[i].y = 0;
     }
-    else if(predicted_positions[i].y >= grid_size.y)
+    else if(predicted_positions[i].y >= (float) container.y)
     {
-        predicted_positions[i].y = grid_size.y;
+        predicted_positions[i].y = (float) container.y;
     }
 }
 
-__global__ void set_velocities(v2 *velocities, v2 *pressures, v2 *viscosities, int n_particles, settings s)
+__global__ void set_velocities(float_v2 *velocities, float_v2 *pressures, float_v2 *viscosities, settings s)
 {
     int i = (int) (blockIdx.x * blockDim.x + threadIdx.x);
 
-    if(i >= n_particles)
+    if(i >= s.ss.n_particles)
         return;
 
-    v2 total_force = {pressures[i].x + viscosities[i].x, pressures[i].y + viscosities[i].y};
+    float_v2 total_force = {pressures[i].x + viscosities[i].x, pressures[i].y + viscosities[i].y};
 
-    velocities[i].x += (total_force.x / s.mass)*s.time_step;
-    velocities[i].y += (total_force.y / s.mass)*s.time_step;
+    velocities[i].x += (total_force.x / s.ss.mass)*s.ss.time_step;
+    velocities[i].y += (total_force.y / s.ss.mass)*s.ss.time_step;
 
-    velocities[i].y += -9.81f*s.time_step;
+    velocities[i].y += -9.81f*s.ss.time_step;
 
 }
 
 
-__device__ inline v2 cell_coordinate(v2 pos, float h)
+__device__ int_v2 cell_coordinate(float_v2 pos, float h)
 {
-    v2 cell;
+    int_v2 cell;
 
-    cell.x = floorf(pos.x/h);
-    cell.y = floorf(pos.y/h);
+    cell.x = (int) floorf(pos.x/h);
+    cell.y = (int) floorf(pos.y/h);
 
     return cell;
 }
 
-//Simplest hash function I could come up with, surely there is room for improvement
-__device__ inline int hash_cell(int max_hash, v2 pos)
+/* Simplest hash function I could come up with, surely has room for improvement.
+ * Values multiplied with prime numbers to increase spread, reduce collisions.
+ * Lastly, values clamped between 0 and max_hash-1.
+ */
+__device__ int hash_cell(int max_hash, int_v2 pos)
 {
-    unsigned int hashx = (int)pos.x * 11;
-    unsigned int hashy = (int)pos.y * 4079;
+    const unsigned int hashx = pos.x * 11;
+    const unsigned int hashy = pos.y * 4079;
     return ((hashx + hashy)*7) % max_hash;
 }
 
-__device__ float get_distance_2(v2 pos1, v2 pos2)
+__device__ float get_distance_2(float_v2 pos1, float_v2 pos2)
 {
     return (pos1.x - pos2.x) * (pos1.x - pos2.x) + (pos1.y - pos2.y) * (pos1.y - pos2.y);
 }
 
-__global__ void update_cells(entry *entries, int *start_indices, v2 *predicted_positions, int n_particles, settings s)
+__global__ void update_cells(entry *entries, int *start_indices, float_v2 *predicted_positions, settings s)
 {
     int i = (int) (blockIdx.x * blockDim.x + threadIdx.x);
 
-    if(i >= n_particles)
+    if(i >= s.ss.n_particles)
         return;
 
-    v2 cell_pos = cell_coordinate(predicted_positions[i], s.smoothing_length);
-    int cell_key = hash_cell(n_particles, cell_pos);
+    int_v2 cell_pos = cell_coordinate(predicted_positions[i], s.ss.smoothing_length);
+    int cell_key = hash_cell(s.ss.n_particles, cell_pos);
 
-    entries[i] = {cell_key, cell_pos, i};
+    entries[i] = {cell_key, i};
     start_indices[i] = -1;
 }
 
 __global__ void bitonic_sort(entry *entries, int n_entries, int j, int k)
 {
-    int i = threadIdx.x + blockDim.x * blockIdx.x;
+    int i = (int) (threadIdx.x + blockDim.x * blockIdx.x);
 
     if(i >= n_entries)
         return;
@@ -564,54 +580,62 @@ __global__ void set_start_indices(entry *entries, int *start_indices, int n_part
     }
 }
 
-__global__ void set_viscosities(v2 *velocities, v2 *predicted_positions, v2 *viscosities, int n_particles, settings s, v2 size, entry *entries, int *start_indices)
+__global__ void set_viscosities(float_v2 *velocities, float_v2 *predicted_positions, float_v2 *viscosities, settings s, int_v2 size, entry *entries, int *start_indices)
 {
     int i = (int) (blockIdx.x * blockDim.x + threadIdx.x);
 
-    if(i >= n_particles)
+    if(i >= s.ss.n_particles)
         return;
 
-    viscosities[i] = calculate_viscosity(velocities, predicted_positions, n_particles, i, s, size, entries, start_indices);
+    viscosities[i] = calculate_viscosity(velocities, predicted_positions, i, s, size, entries, start_indices);
 }
 
-__device__ v2 calculate_viscosity(v2 *velocities, v2 *predicted_positions, int n_particles, int p_number, settings s, v2 size, entry *entries, int *start_indices)
+__device__ float_v2 calculate_viscosity(float_v2 *velocities, float_v2 *predicted_positions, int p_number, settings s, int_v2 size, entry *entries, int *start_indices)
 {
-    v2 viscosity = {0, 0};
-    v2 center = cell_coordinate(predicted_positions[p_number], s.smoothing_length);
+    const float h = s.ss.smoothing_length;
+    const float h_2 = h * h;
+    const float viscosity_multiplier = s.ss.viscosity;
+    const int n_particles = s.ss.n_particles;
 
-    float h_2 = s.smoothing_length * s.smoothing_length;
+    const int_v2 center = cell_coordinate(predicted_positions[p_number], h);
 
-    for(int offsetX = -1; offsetX <= 1; offsetX++)
+    float_v2 viscosity = {0, 0};
+
+    const int min_x = center.x - 1 < 0 ? 0 : center.x - 1;
+    const int max_x = center.x + 1 >= size.x ? center.x : center.x + 1;
+    const int min_y = center.y - 1 < 0 ? 0 : center.y - 1;
+    const int max_y = center.y + 1 >= size.y ? center.x : center.y + 1;
+
+    for(int x = min_x; x <= max_x; x++)
     {
-        if((center.x + offsetX) < 0 || (center.x + offsetX) >= size.x)
-            continue;
 
-        for(int offsetY = -1; offsetY <= 1; offsetY++)
+        for(int y = min_y; y <= max_y; y++)
         {
-            if((center.y + offsetY) < 0 || (center.y + offsetY) >= size.y)
-                continue;
-
-            v2 cell = {center.x + offsetX, center.y + offsetY};
-            int cell_key = hash_cell(n_particles, cell);
-            int cell_start = start_indices[cell_key];
+            const int_v2 cell = {x, y};
+            const int cell_key = hash_cell(n_particles, cell);
+            const int cell_start = start_indices[cell_key];
 
             if(cell_start == -1)
                 continue;
 
             for(int i = cell_start; i < n_particles; i++)
             {
+                const entry current_entry = entries[i];
                 //Double-checking hash and location
-                if(entries[i].cell_key != cell_key || (entries[i].location.x != center.x + offsetX || entries[i].location.y != center.y + offsetY))
+                if(current_entry.cell_key != cell_key)
                     break;
 
-                int pi = entries[i].particle_index;
+                const int pi = current_entry.particle_index;
 
-                float distance_2 = get_distance_2(predicted_positions[p_number], predicted_positions[pi]);
+                if(pi == p_number)
+                    continue; //Ignore self
+
+                const float distance_2 = get_distance_2(predicted_positions[p_number], predicted_positions[pi]);
 
                 if(distance_2 > h_2)
                     continue;
 
-                float influence = viscosity_laplacian_kernel(sqrt(distance_2), s.smoothing_length);
+                const float influence = viscosity_laplacian_kernel(sqrt(distance_2), h);
 
                 viscosity.x += (velocities[pi].x - velocities[p_number].x) * influence;
                 viscosity.y += (velocities[pi].y - velocities[p_number].y) * influence;
@@ -619,8 +643,8 @@ __device__ v2 calculate_viscosity(v2 *velocities, v2 *predicted_positions, int n
         }
     }
 
-    viscosity.x *= s.viscosity;
-    viscosity.y *= s.viscosity;
+    viscosity.x *= viscosity_multiplier;
+    viscosity.y *= viscosity_multiplier;
 
     return viscosity;
 }

@@ -1,0 +1,20 @@
+#settings
+
+mass: 1
+rest_density: 0.001
+viscosity: 0.3
+smoothing_length: 1
+# Smaller time steps will result in more accurate but slower simulations. 1/30 is a good deal between accuracy and speed.
+# A smaller smoothing radius also requires smaller time steps.
+time_step: 0.0083
+pressure_multiplier: 10
+bounce_multiplier: 0.8
+near_pressure_multiplier: 20
+n_particles: 100000
+
+#render settings
+#recommended water-like values: 3, 1.4, 1
+
+red_absorption: 3
+green_absorption: 1.4
+blue_absorption: 1

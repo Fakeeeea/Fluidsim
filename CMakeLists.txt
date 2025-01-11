@@ -13,6 +13,8 @@ add_executable(fluidsim WIN32 main.c
         sim_math.cuh
         render_math.cuh
         render_math.cu
+        sim_parser.h
+        sim_parser.c
 )
 
 set_target_properties(fluidsim PROPERTIES

@@ -4,17 +4,14 @@
 #include <windows.h>
 #include <time.h>
 #include <math.h>
+#include <stdio.h>
 
 #include "types.h"
 #include "sim_math.cuh"
 #include "render_math.cuh"
+#include "sim_parser.h"
 
-#define PIXELTOUNIT (1.0f/10)
-
-#define N_PARTICLES 10000
-
-void initialize_settings();
-void create_particles(int min_x, int min_y, int max_x, int max_y);
+void summon_particles(int n_boundaries, boundary *boundaries);
 
 char * szAppName = "Fluid";
 
@@ -27,6 +24,8 @@ cells cell_ll;
 LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM);
 
 int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine, int iCmdShow){
+    AllocConsole();
+    freopen("CONOUT$", "w", stdout);
     HWND hwnd;
     MSG msg;
     WNDCLASS wndclass;
@@ -63,12 +62,13 @@ int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine
 
     while (1) {
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) return msg.wParam;
+            if (msg.message == WM_QUIT)
+                return msg.wParam;
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
 
-        simulation_step_gpu((v2) {rect.right*PIXELTOUNIT, rect.bottom*PIXELTOUNIT}, &sim, N_PARTICLES, s, &cell_ll);
+        simulation_step_gpu( (int_v2){ rect.right * PIXELTOUNIT, rect.bottom * PIXELTOUNIT}, &sim, s, &cell_ll);
         InvalidateRect(hwnd, &rect, 0);
     }
 
@@ -90,8 +90,10 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         case WM_SIZE:
             GetClientRect(hwnd, &rect);
 
-            cell_ll.size = (v2) {rect.right * PIXELTOUNIT, rect.bottom * PIXELTOUNIT};
-            realloc_render_memory(&gpu_bitmap, (v2){rect.right, rect.bottom});
+            cell_ll.world_size = (int_v2) { (int) ceilf( (float) rect.right * PIXELTOUNIT),
+                                            (int) ceilf( (float) rect.bottom * PIXELTOUNIT)};
+
+            realloc_render_memory(&gpu_bitmap, (int_v2) { rect.right, rect.bottom });
 
             if (memBitmap) {
                 DeleteObject(memBitmap);
@@ -104,24 +106,41 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         case WM_CREATE:
             GetClientRect(hwnd, &rect);
 
-            sim.pos = (v2*) malloc(sizeof(v2)*N_PARTICLES);
+            //Initialize and parse simulation settings.
+            memset(&s, 0, sizeof(settings));
+            parse_settings(&s);
 
-            create_particles((rect.right/2 - rect.right/4)*PIXELTOUNIT, (rect.bottom/2 - 300)*PIXELTOUNIT, (rect.right/2 + rect.right/4)*PIXELTOUNIT, (rect.bottom/2 + 300)*PIXELTOUNIT);
+            const int n_particles = s.ss.n_particles;
+            const float h = s.ss.smoothing_length;
 
-            malloc_simulation_gpu(N_PARTICLES, &sim);
+            //Allocate memory for particle creation.
+            sim.pos = (float_v2*) malloc(sizeof(float_v2) * n_particles);
 
-            initialize_settings();
+            //Parse boundaries and spawn particles.
+            int_v2 temp_world_size = (int_v2) { (int) ceilf( (float) rect.right * PIXELTOUNIT),
+                                                (int) ceilf( (float) rect.bottom * PIXELTOUNIT)};
+            int n_spawn;
+            boundary *spawn = parse_spawn((boundary) {{0, 0}, temp_world_size}, &n_spawn);
+            summon_particles(n_spawn, spawn);
 
-            float poly6 = 4.0f/(M_PI*pow(s.smoothing_length*s.smoothing_length, 4));
-            float spiky = -10.0f/(M_PI*pow(s.smoothing_length, 5));
-            float viscosity = 40.0f/(M_PI*pow(s.smoothing_length, 5));
+            //Allocate gpu memory for the simulation.
+            malloc_simulation_gpu(s.ss.n_particles, &sim);
 
+            //Pre-calculate kernels used in simulation
+            const float poly6 =  4.0f/( (float) M_PI*powf(h*h, 4));
+            const float spiky =  -10.0f/( (float) M_PI*powf(h, 5));
+            const float viscosity = 40.0f/( (float) M_PI*powf(h, 5));
+
+            //Set the calculated kernels in the __constant__ memory.
             initialize_constants(poly6, spiky, viscosity);
 
-            create_cell_ll_gpu(&cell_ll, N_PARTICLES, rect, s);
+            //Allocate memory for the cell linked list.
+            create_cell_ll_gpu(&cell_ll, rect, s);
 
-            allocate_render_memory(&gpu_bitmap, (v2){rect.right, rect.bottom});
+            //Allocate memory for rendering.
+            allocate_render_memory(&gpu_bitmap, (int_v2) { rect.right, rect.bottom });
 
+            //Create the dc for double buffering.
             memDC = CreateCompatibleDC(GetDC(hwnd));
             memBitmap = CreateCompatibleBitmap(GetDC(hwnd), rect.right, rect.bottom);
             oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
@@ -141,7 +160,7 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             bmi.bmiHeader.biCompression = BI_RGB;
 
             int *colored_bitmap;
-            colored_bitmap = get_colored_bitmap(sim.gpu_pos, (v2) {rect.right, rect.bottom}, s, cell_ll.entries, cell_ll.start_indices, N_PARTICLES, gpu_bitmap);
+            colored_bitmap = get_colored_bitmap(sim.gpu_pos, (int_v2) {rect.right, rect.bottom}, s, cell_ll.entries, cell_ll.start_indices, gpu_bitmap);
 
             SetDIBits(memDC, memBitmap, 0, rect.bottom, colored_bitmap, &bmi, DIB_RGB_COLORS);
             BitBlt(hdc, 0, 0, rect.right, rect.bottom, memDC, 0, 0, SRCCOPY);
@@ -168,26 +187,20 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     return DefWindowProc (hwnd, message, wParam, lParam) ;
 }
 
-
-void initialize_settings()
-{
-    s.mass = 1;
-    s.rest_density = 0.1f;
-    s.viscosity = 0.3f;
-    s.smoothing_length = 5;
-    s.time_step = 1/30.f;
-    s.pressure_multiplier = 30;
-    s.bounce_multiplier = 0.4f;
-    s.near_pressure_multiplier = 10.0f;
-}
-
-void create_particles(int min_x, int min_y, int max_x, int max_y)
+void summon_particles(int n_boundaries, boundary *boundaries)
 {
     srand(time(NULL));
 
-    for(int i = 0; i < N_PARTICLES; i++)
+    int particles_boundary = s.ss.n_particles/n_boundaries;
+    int particles_last_boundary = s.ss.n_particles - particles_boundary*(n_boundaries-1);
+
+    for(int i = 0; i < n_boundaries; i++)
     {
-        sim.pos[i].x = min_x + ((float)rand() / RAND_MAX) * (max_x - min_x);
-        sim.pos[i].y = min_y + ((float)rand() / RAND_MAX) * (max_y - min_y);
+        for(int j = 0; j < (i == n_boundaries - 1 ? particles_last_boundary : particles_boundary); j++)
+        {
+            float px = boundaries[i].min.x + ((float) rand() / RAND_MAX) * (boundaries[i].max.x - boundaries[i].min.x);
+            float py = boundaries[i].min.y + ((float) rand() / RAND_MAX) * (boundaries[i].max.y - boundaries[i].min.y);
+            sim.pos[i*particles_boundary + j] = (float_v2) {px, py};
+        }
     }
 }

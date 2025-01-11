@@ -1,0 +1,4 @@
+num_boundaries: 1
+#values are percentages, compared to max screen world_size
+boundary 0: 30 30 70 70
+
