@@ -1,0 +1,5 @@
+num_obstacles: 2
+#values are percentages, compared to initial screen world_size
+#this means, when window is scaled, the obstacles won't scale accordingly.
+obstacle 0: 45 0 55 20
+obstacle 1: 45 40 55 100

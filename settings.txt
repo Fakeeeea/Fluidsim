@@ -1,16 +1,22 @@
 #settings
 
 mass: 1
-rest_density: 0.001
+rest_density: 1
 viscosity: 0.3
 smoothing_length: 1
-# Smaller time steps will result in more accurate but slower simulations. 1/30 is a good deal between accuracy and speed.
+# Smaller time steps will result in more accurate but slower simulations.
 # A smaller smoothing radius also requires smaller time steps.
 time_step: 0.0083
-pressure_multiplier: 10
+# Compared to normal time_step, this time_step is used for predictions. Every iteration is not based
+# on the particle's current positions, but on a predicted position, which reduces the chaos of the simulation (specially in the initial frames
+# where the particles are closely packed together).
+prediction_time_step: 0.0083
+pressure_multiplier: 30
 bounce_multiplier: 0.8
-near_pressure_multiplier: 20
+near_pressure_multiplier: 10
 n_particles: 100000
+spawn_random: 1
+gravity: -9.81
 
 #render settings
 #recommended water-like values: 3, 1.4, 1

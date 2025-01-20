@@ -4,6 +4,7 @@
 #include "types.h"
 
 void parse_settings(settings *s);
-boundary* parse_spawn(boundary screen, int *n_spawn);
+int_b* parse_spawn(int_b max_size, int *n_spawn);
+float_b* parse_obstacles(int_b max_size, int *n_obstacles);
 
 #endif //FLUIDSIM_SIM_PARSER_H

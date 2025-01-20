@@ -11,12 +11,6 @@ typedef struct int_v2 {
     int y;
 }int_v2;
 
-typedef struct particles{
-    float_v2 *pos;
-    float_v2 *gpu_pos, *gpu_p_pos, *gpu_vel, *gpu_pressure, *gpu_viscosity;
-    float *gpu_density, *gpu_near_density;
-}particles;
-
 typedef struct render_settings{
     float red_absorption;
     float blue_absorption;
@@ -28,11 +22,14 @@ typedef struct sim_settings{
     float mass;
     float viscosity;
     float time_step;
+    float prediction_time_step;
     float rest_density;
     float pressure_multiplier;
     float bounce_multiplier;
     float near_pressure_multiplier;
+    float gravity;
     int n_particles;
+    int spawn_random;
 }sim_settings;
 
 typedef struct settings{
@@ -51,9 +48,25 @@ typedef struct cells{
     int *start_indices;
 }cells;
 
-typedef struct boundary{
+typedef struct int_b{
     int_v2 min;
     int_v2 max;
-}boundary;
+}int_b;
+
+typedef struct float_b{
+    float_v2 min;
+    float_v2 max;
+}float_b;
+
+typedef struct particles{
+    float_v2 *pos;
+    float_v2 *gpu_pos, *gpu_p_pos, *gpu_vel, *gpu_pressure, *gpu_viscosity;
+    float *gpu_density, *gpu_near_density;
+}particles;
+
+typedef struct obstacles{
+    float_b *obstacles, *gpu_obstacles;
+    int n_obstacles;
+}obstacles;
 
 #endif //FLUIDSIM_TYPES_H

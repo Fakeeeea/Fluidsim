@@ -7,7 +7,7 @@ include_directories("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.6/in
 
 link_directories("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.6/lib/x64")
 
-add_executable(fluidsim WIN32 
+add_executable(fluidsim WIN32
         src/main.c
         src/types.h
         src/sim_math.cu

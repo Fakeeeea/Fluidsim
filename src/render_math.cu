@@ -11,13 +11,13 @@ extern "C" {
 
 __host__ void allocate_render_memory(int** gpu_bitmap, int_v2 size)
 {
-    cudaMalloc(gpu_bitmap, size.x * size.y * sizeof(int));
+    cudaHostAlloc(gpu_bitmap, size.x * size.y * sizeof(int), cudaHostAllocDefault);
 }
 
 __host__ void realloc_render_memory(int** gpu_bitmap, int_v2 size)
 {
-    cudaFree(*gpu_bitmap);
-    cudaMalloc(gpu_bitmap, size.x * size.y * sizeof(int));
+    cudaFreeHost(*gpu_bitmap);
+    cudaHostAlloc(gpu_bitmap, size.x * size.y * sizeof(int), cudaHostAllocDefault);
 }
 
 __host__ void free_render_memory(int* gpu_bitmap)
@@ -25,15 +25,33 @@ __host__ void free_render_memory(int* gpu_bitmap)
     cudaFree(gpu_bitmap);
 }
 
-__host__ int* get_colored_bitmap(float_v2 *positions, int_v2 size, settings s, entry *entries, int *start_indices, int *gpu_bitmap)
+__host__ int* get_colored_bitmap(float_v2 *positions, int_v2 size, settings s, entry *entries, int *start_indices, int *gpu_bitmap, obstacles obs)
 {
-    cudaMemset(gpu_bitmap, RGB_TO_INT(255,255,255), size.x * size.y * sizeof(int));
-
-    dim3 block_size(16,16);
-    dim3 num_blocks(size.x / block_size.x, size.y / block_size.y);
+    static const dim3 block_size(16,16);
+    static const dim3 num_blocks((size.x + block_size.x - 1) / block_size.x,
+                           (size.y + block_size.y - 1) / block_size.y);
 
     set_bitmap_colors<<<num_blocks, block_size>>>(gpu_bitmap, positions, size, s, entries, start_indices);
     cudaDeviceSynchronize();
+
+    for(int i = 0; i < obs.n_obstacles; i++)
+    {
+        const int min_x = (int) (obs.obstacles[i].min.x * UNITTOPIXEL) < 0 ? 0 : (int) (obs.obstacles[i].min.x * UNITTOPIXEL);
+        const int min_y = (int) (obs.obstacles[i].min.y * UNITTOPIXEL) < 0 ? 0 : (int) (obs.obstacles[i].min.y * UNITTOPIXEL);
+        const int max_x = (int) (obs.obstacles[i].max.x * UNITTOPIXEL) > size.x - 1 ? size.x - 1 : (int) (obs.obstacles[i].max.x * UNITTOPIXEL);
+        const int max_y = (int) (obs.obstacles[i].max.y * UNITTOPIXEL) > size.y - 1 ? size.y - 1 : (int) (obs.obstacles[i].max.y * UNITTOPIXEL);
+
+        const int width = max_x - min_x;
+        const int height = max_y - min_y;
+
+        if(width <= 0 || height <= 0)
+            continue;
+
+        const dim3 num_blocks_boundaries((width + block_size.x - 1) / block_size.x,
+                                        (height + block_size.y - 1) / block_size.y);
+
+        draw_boundary<<<block_size, num_blocks_boundaries>>>(gpu_bitmap, size, {min_x, min_y}, {max_x, max_y});
+    }
 
     int *bitmap = (int*)malloc(size.x * size.y * sizeof(int));
     cudaMemcpy(bitmap, gpu_bitmap, size.x * size.y * sizeof(int), cudaMemcpyDeviceToHost);
@@ -50,7 +68,7 @@ __global__ void set_bitmap_colors(int *gpu_bitmap, float_v2 *positions, int_v2 s
     int x = (int) (blockIdx.x * blockDim.x + threadIdx.x);
     int y = (int) (blockIdx.y * blockDim.y + threadIdx.y);
 
-    if(x > size.x || y > size.y)
+    if(x >= size.x || y >= size.y)
         return;
 
     const float_v2 pos = {(float) x * PIXELTOUNIT, (float) y * PIXELTOUNIT};
@@ -99,4 +117,21 @@ __global__ void set_bitmap_colors(int *gpu_bitmap, float_v2 *positions, int_v2 s
 
     //Color the pixel in the bitmap
     gpu_bitmap[(int)(y * size.x + x)] = RGB_TO_INT((255-red),(255-green),(255-blue));
+}
+
+__global__ void draw_boundary(int *gpu_bitmap, int_v2 size, int_v2 min, int_v2 max)
+{
+    const int x = (int) (blockIdx.x * blockDim.x + threadIdx.x);
+    const int y = (int) (blockIdx.y * blockDim.y + threadIdx.y);
+
+    const int world_x = x + min.x;
+    const int world_y = y + min.y;
+
+    if(world_x >= size.x || world_y >= size.y || world_x < 0 || world_y < 0)
+        return;
+
+    if(world_x > max.x || world_y > max.y)
+        return;
+
+    gpu_bitmap[(int)(world_y * size.x + world_x)] = RGB_TO_INT(173, 173, 173);
 }
