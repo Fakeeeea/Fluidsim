@@ -92,15 +92,6 @@ __global__ void set_bitmap_colors(int *gpu_bitmap, float_v2 *positions, int_v2 s
         return;
     }
 
-    /* Theoretical maximum density calculation (Really theoretical, extremely theoretical, but gives good results)
-     * With this approximation, particles would have an ideal center of maximum density (distance 0), and around another "circle" of 6 particles,
-     * with distance h/2 (^2 = h^2/4). Lastly we would have a final "circle" of 12 particles with distance h/sqrt(2) (^2 = h^2/2)
-     * (Imagining the particles evenly distributed in the 2d space, 60 degrees apart from each other)
-     */
-    const float max_theoretical_density = poly6_smoothing_kernel(0.0f, h_2) +
-                                          6 * poly6_smoothing_kernel(h_2 * 0.25f, h_2) +
-                                          12 * poly6_smoothing_kernel(h_2 * 0.5f, h_2);
-
     /* Normalize the density relative to maximum theoretical density (Again, really theoretical maximum density)
      * this sadly, makes it way less "fluid-like". But I guess it's a good tradeoff for it working with most smoothing radii (or at least the ones I tested)
      */
