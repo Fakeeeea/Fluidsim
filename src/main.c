@@ -18,7 +18,7 @@ particles sim;
 
 settings s;
 RECT rect;
-cells cell_ll;
+cells cell_sm;
 obstacles obs;
 
 LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM);
@@ -66,7 +66,7 @@ int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine
             DispatchMessage(&msg);
         }
 
-        simulation_step_gpu( (int_v2){ rect.right * PIXELTOUNIT, rect.bottom * PIXELTOUNIT}, &sim, s, &cell_ll, &obs);
+        simulation_step_gpu((int_v2){ rect.right * PIXELTOUNIT, rect.bottom * PIXELTOUNIT}, &sim, s, &cell_sm, &obs);
         InvalidateRect(hwnd, &rect, 0);
     }
 
@@ -88,8 +88,8 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         case WM_SIZE:
             GetClientRect(hwnd, &rect);
 
-            cell_ll.world_size = (int_v2) { (int) ceilf( (float) rect.right * PIXELTOUNIT),
-                                            (int) ceilf( (float) rect.bottom * PIXELTOUNIT)};
+            cell_sm.world_size = (int_v2) {(int) ceilf((float) rect.right * PIXELTOUNIT),
+                                           (int) ceilf( (float) rect.bottom * PIXELTOUNIT)};
 
             realloc_render_memory(&gpu_bitmap, (int_v2) { rect.right, rect.bottom });
 
@@ -128,15 +128,26 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             malloc_simulation_gpu(s.ss.n_particles, &sim, &obs);
 
             //Pre-calculate kernels used in simulation
-            const float poly6 =  4.0f/( (float) M_PI*powf(h*h, 4));
+            const float h_2 = h*h;
+            const float poly6 =  4.0f/( (float) M_PI*powf(h_2, 4));
             const float spiky =  -10.0f/( (float) M_PI*powf(h, 5));
             const float viscosity = 40.0f/( (float) M_PI*powf(h, 5));
 
-            //Set the calculated kernels in the __constant__ memory.
-            initialize_constants(poly6, spiky, viscosity);
+            /* Theoretical maximum density calculation (Really theoretical, extremely theoretical, but gives good results)
+             * With this approximation, particles would have an ideal center of maximum density (distance 0), and around another "circle" of 6 particles,
+             * with distance h/2 (^2 = h^2/4). Lastly we would have a final "circle" of 12 particles with distance h/sqrt(2) (^2 = h^2/2)
+             * (Imagining the particles evenly distributed in the 2d space, 60 degrees apart from each other)
+             */
 
-            //Allocate memory for the cell linked list.
-            create_cell_ll_gpu(&cell_ll, rect, s);
+            const float mtd = poly6 * powf(h_2, 3) + //distance 0
+                              6 * poly6 * powf((h_2 - h_2 * 0.25f), 3) + //distance h/4
+                              12 * poly6 * powf((h_2 - h_2 * 0.5f), 3); //distance h/2
+
+            //Set the calculated kernels in the __constant__ memory.
+            initialize_constants(poly6, spiky, viscosity, mtd);
+
+            //Allocate memory for the cell spatial map.
+            create_cell_sm_gpu(&cell_sm, rect, s);
 
             //Allocate memory for rendering.
             allocate_render_memory(&gpu_bitmap, (int_v2) { rect.right, rect.bottom });
@@ -161,7 +172,7 @@ LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             bmi.bmiHeader.biCompression = BI_RGB;
 
             int *colored_bitmap;
-            colored_bitmap = get_colored_bitmap(sim.gpu_pos, (int_v2) {rect.right, rect.bottom}, s, cell_ll.entries, cell_ll.start_indices, gpu_bitmap, obs);
+            colored_bitmap = get_colored_bitmap(sim.gpu_pos, (int_v2) {rect.right, rect.bottom}, s, cell_sm.entries, cell_sm.start_indices, gpu_bitmap, obs);
 
             SetDIBits(memDC, memBitmap, 0, rect.bottom, colored_bitmap, &bmi, DIB_RGB_COLORS);
             BitBlt(hdc, 0, 0, rect.right, rect.bottom, memDC, 0, 0, SRCCOPY);

@@ -14,14 +14,15 @@
 extern __constant__ float poly6_scaling;
 extern __constant__ float spiky_scaling;
 extern __constant__ float viscosity_scaling;
+extern __constant__ float max_theoretical_density;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 void malloc_simulation_gpu(int n_particles, particles *sim, obstacles *obs);
 void simulation_step_gpu(int_v2 container, particles *sim, settings s, cells *cell_ll, obstacles *obs);
-void create_cell_ll_gpu(cells *cell_ll, RECT rect, settings s);
-void initialize_constants(float poly6, float spiky, float viscosity);
+void create_cell_sm_gpu(cells *cell_ll, RECT rect, settings s);
+void initialize_constants(float poly6, float spiky, float viscosity, float mtd);
 //void sort_entries(entry *entries, int n_particles); legacy
 void free_simulation_memory(particles *sim);
 

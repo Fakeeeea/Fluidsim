@@ -16,6 +16,7 @@
 __constant__ float poly6_scaling;
 __constant__ float spiky_scaling;
 __constant__ float viscosity_scaling;
+__constant__ float max_theoretical_density;
 
 /*"objects" for thrust (my limited C++ knowledge might be showing here)
  * they are kept extremely simple, C++ was not the main focus of this project.
@@ -121,7 +122,7 @@ __host__  void simulation_step_gpu(int_v2 container, particles *sim, settings s,
     cudaDeviceSynchronize();
 }
 
-__host__ void create_cell_ll_gpu(cells *cell_ll, RECT rect, settings s)
+__host__ void create_cell_sm_gpu(cells *cell_ll, RECT rect, settings s)
 {
     int_v2 size = { (int) ceilf( (float) rect.right / s.ss.smoothing_length), (int) ceilf( (float) rect.bottom / s.ss.smoothing_length)};
 
@@ -131,11 +132,12 @@ __host__ void create_cell_ll_gpu(cells *cell_ll, RECT rect, settings s)
 
 }
 
-__host__  void initialize_constants(float poly6, float spiky, float viscosity)
+__host__  void initialize_constants(float poly6, float spiky, float viscosity, float mtd)
 {
     cudaMemcpyToSymbol(poly6_scaling, &poly6, sizeof(float));
     cudaMemcpyToSymbol(spiky_scaling, &spiky, sizeof(float));
     cudaMemcpyToSymbol(viscosity_scaling, &viscosity, sizeof(float));
+    cudaMemcpyToSymbol(max_theoretical_density, &mtd, sizeof(float));
 }
 
 /* legacy sort_entries function, meant to be used with the bitonic sort implementation.
